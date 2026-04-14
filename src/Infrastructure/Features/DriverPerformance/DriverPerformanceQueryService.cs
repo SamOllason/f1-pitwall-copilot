@@ -8,38 +8,92 @@ public sealed class DriverPerformanceQueryService(PitWallDbContext dbContext) : 
 {
     public async Task<IReadOnlyList<DriverPerformanceDto>> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
-        var averages = await dbContext.LapSummaries
-            .GroupBy(x => x.DriverId)
-            .Select(group => new
+        var dashboard = await GetDashboardAsync(driverId: null, raceId: null, cancellationToken);
+        return dashboard.Rows;
+    }
+
+    public async Task<DriverPerformanceDashboardDto> GetDashboardAsync(
+        int? driverId,
+        int? raceId,
+        CancellationToken cancellationToken = default)
+    {
+        var drivers = await dbContext.Drivers
+            .OrderBy(x => x.Name)
+            .Select(x => new DriverFilterOptionDto(x.Id, x.Name, x.Team))
+            .ToListAsync(cancellationToken);
+
+        var races = await dbContext.Races
+            .OrderBy(x => x.Date)
+            .Select(x => new RaceFilterOptionDto(x.Id, x.Name, x.Date))
+            .ToListAsync(cancellationToken);
+
+        var baselineQuery = dbContext.LapSummaries
+            .AsNoTracking()
+            .Include(x => x.Driver)
+            .Include(x => x.Race)
+            .AsQueryable();
+
+        if (raceId is not null)
+        {
+            baselineQuery = baselineQuery.Where(x => x.RaceId == raceId.Value);
+        }
+
+        var baselineRows = await baselineQuery
+            .Select(x => new
             {
-                DriverId = group.Key,
-                AvgLap = group.Average(x => x.AverageLapTimeSeconds)
+                x.DriverId,
+                DriverName = x.Driver.Name,
+                x.Driver.Team,
+                x.RaceId,
+                RaceName = x.Race.Name,
+                x.Race.Date,
+                x.AverageLapTimeSeconds
             })
             .ToListAsync(cancellationToken);
 
-        var drivers = await dbContext.Drivers.ToListAsync(cancellationToken);
-        var byId = averages.ToDictionary(x => x.DriverId, x => x.AvgLap);
+        var avgByDriver = baselineRows
+            .GroupBy(x => new { x.DriverId, x.DriverName, x.Team })
+            .ToDictionary(
+                x => x.Key.DriverId,
+                x => new
+                {
+                    x.Key.DriverName,
+                    x.Key.Team,
+                    AverageLap = x.Average(y => y.AverageLapTimeSeconds)
+                });
 
-        var result = new List<DriverPerformanceDto>(drivers.Count);
-        foreach (var driver in drivers)
-        {
-            byId.TryGetValue(driver.Id, out var avgLap);
-            
-            // get this so can compare to current driver avgLap time below
-            var teammateAverageLap = drivers
-                .Where(d => d.Team == driver.Team && d.Id != driver.Id)
-                .Select(d => byId.TryGetValue(d.Id, out var value) ? value : avgLap)
-                .DefaultIfEmpty(avgLap)
-                .Average();
+        var rows = avgByDriver
+            .Where(x => driverId is null || x.Key == driverId.Value)
+            .Select(x =>
+            {
+                var teammateAverage = avgByDriver
+                    .Where(y => y.Value.Team == x.Value.Team && y.Key != x.Key)
+                    .Select(y => y.Value.AverageLap)
+                    .DefaultIfEmpty(x.Value.AverageLap)
+                    .Average();
 
-            result.Add(new DriverPerformanceDto(
-                driver.Id,
-                driver.Name,
-                driver.Team,
-                decimal.Round(avgLap, 3),
-                decimal.Round(avgLap - teammateAverageLap, 3)));
-        }
+                return new DriverPerformanceDto(
+                    DriverId: x.Key,
+                    DriverName: x.Value.DriverName,
+                    Team: x.Value.Team,
+                    AverageLapTimeSeconds: decimal.Round(x.Value.AverageLap, 3),
+                    DeltaToTeammateSeconds: decimal.Round(x.Value.AverageLap - teammateAverage, 3));
+            })
+            .OrderBy(x => x.AverageLapTimeSeconds)
+            .ToList();
 
-        return result.OrderBy(x => x.AverageLapTimeSeconds).ToList();
+        var trendDriverId = driverId ?? rows.FirstOrDefault()?.DriverId;
+        var trend = baselineRows
+            .Where(x => trendDriverId is not null && x.DriverId == trendDriverId.Value)
+            .GroupBy(x => new { x.RaceId, x.RaceName, x.Date })
+            .Select(x => new DriverRaceTrendPointDto(
+                RaceId: x.Key.RaceId,
+                RaceName: x.Key.RaceName,
+                RaceDate: x.Key.Date,
+                AverageLapTimeSeconds: decimal.Round(x.Average(y => y.AverageLapTimeSeconds), 3)))
+            .OrderBy(x => x.RaceDate)
+            .ToList();
+
+        return new DriverPerformanceDashboardDto(drivers, races, rows, trend);
     }
 }

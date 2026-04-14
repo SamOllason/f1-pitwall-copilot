@@ -1,12 +1,143 @@
 ﻿@page "/"
+@using Application.Features.AskPitWall
 @using Application.Features.DriverPerformance
+@inject IAskPitWallService AskPitWallService
 @inject IDriverPerformanceQueryService DriverPerformanceQueryService
+@inject IJSRuntime JS
 
 <PageTitle>PitWall Dashboard</PageTitle>
 
 <h1>Driver Performance Dashboard</h1>
 
 <p class="text-muted">Explore average pace, teammate delta, and race trend from seeded telemetry.</p>
+
+    <div class="card shadow-sm mt-3">
+        <div class="card-body">
+            <h2 class="h5 mb-3">Ask PitWall</h2>
+            <p class="text-muted mb-3">Ask for comparisons or consistency and PitWall will answer from backend tools.</p>
+
+            <details class="mb-3">
+                <summary class="fw-semibold">Show suggested RAG prompts</summary>
+                <p class="text-muted mt-2 mb-2">Use these to trigger retrieval from Silverstone/Suzuka race notes and debrief chunks.</p>
+                <div class="d-grid gap-2">
+                    @foreach (var prompt in SuggestedPrompts)
+                    {
+                        <div class="border rounded p-2">
+                            <div class="small mb-2">@prompt</div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-primary"
+                                        type="button"
+                                        @onclick="() => UsePrompt(prompt)"
+                                        disabled="@isAsking">
+                                    Use
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        type="button"
+                                        @onclick="() => CopyPromptAsync(prompt)"
+                                        disabled="@isAsking">
+                                    Copy
+                                </button>
+                                @if (string.Equals(lastCopiedPrompt, prompt, StringComparison.Ordinal))
+                                {
+                                    <span class="small text-success align-self-center">Copied</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </details>
+
+            <div class="input-group mb-3">
+                <input class="form-control"
+                       placeholder="e.g. Compare Lando Norris vs Oscar Piastri"
+                       @bind="pitWallQuestion"
+                       @bind:event="oninput"
+                       disabled="@isAsking" />
+                <button class="btn btn-primary"
+                        @onclick="AskPitWallAsync"
+                        disabled="@isAsking">
+                    @(isAsking ? "Asking..." : "Ask")
+                </button>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(askError))
+            {
+                <div class="alert alert-danger" role="alert">@askError</div>
+            }
+
+            @if (askResult is not null)
+            {
+                <div class="row g-3">
+                    <div class="col-lg-8">
+                        <div class="border rounded p-3 bg-light-subtle h-100">
+                            <p class="mb-2"><strong>Answer:</strong> @askResult.Answer</p>
+                            <p class="mb-2"><strong>Why this result:</strong> @askResult.WhySummary</p>
+                            <p class="mb-2 small text-muted">
+                                Request: <code>@askResult.RequestId</code> |
+                                Latency: @askResult.LatencyMs ms |
+                                Tokens: @(askResult.TotalTokens?.ToString() ?? "n/a")
+                            </p>
+                            @if (askResult.UsedFallback)
+                            {
+                                <p class="mb-2 text-warning-emphasis"><strong>Fallback:</strong> Tool/AI path failed, showing deterministic stats.</p>
+                            }
+
+                            @if (askResult.SourceMetrics.Count > 0)
+                            {
+                                <p class="mb-1"><strong>Source metrics</strong></p>
+                                <p class="mb-2"><em>Look for retrieved RAG entries (race/driver/source path) and tool-derived metrics; this shows exactly what evidence grounded the answer.</em></p>
+                                <ul class="mb-0">
+                                    @foreach (var metric in askResult.SourceMetrics)
+                                    {
+                                        <li>@metric</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="border rounded p-3 h-100">
+                            <h3 class="h6 mb-2">Audit Trail</h3>
+                            <p class="mb-2"><em>Look for the sequence: Input -> Policy -> RAG retrieval -> Tool decision -> Tool result -> Final result, which makes the reasoning path transparent.</em></p>
+                            @if (askResult.AuditTrail.Count == 0)
+                            {
+                                <p class="mb-0 text-muted">No audit events captured.</p>
+                            }
+                            else
+                            {
+                                <ol class="mb-0 ps-3">
+                                    @foreach (var entry in askResult.AuditTrail)
+                                    {
+                                        <li class="mb-2">
+                                            <div><strong>@entry.Stage:</strong> @entry.Decision</div>
+                                            <div class="text-muted small">@entry.Detail</div>
+                                        </li>
+                                    }
+                                </ol>
+                            }
+                            @if (askResult.ToolCalls.Count > 0)
+                            {
+                                <p class="mt-3 mb-1"><strong>Tools used</strong></p>
+                                <ul class="mb-0">
+                                    @foreach (var call in askResult.ToolCalls)
+                                    {
+                                        <li><code>@call</code></li>
+                                    }
+                                </ul>
+                            }
+                            <p class="mt-3 mb-1"><strong>Usage</strong></p>
+                            <ul class="mb-0">
+                                <li>Prompt tokens: @(askResult.PromptTokens?.ToString() ?? "n/a")</li>
+                                <li>Completion tokens: @(askResult.CompletionTokens?.ToString() ?? "n/a")</li>
+                                <li>Total tokens: @(askResult.TotalTokens?.ToString() ?? "n/a")</li>
+                                <li>Latency: @askResult.LatencyMs ms</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
 
 <div class="filters mb-3">
     <div class="filter-item">
@@ -115,6 +246,19 @@ else
     private string? loadError;
     private int? selectedDriverId;
     private int? selectedRaceId;
+    private string pitWallQuestion = string.Empty;
+    private bool isAsking;
+    private string? askError;
+    private AskPitWallResponseDto? askResult;
+    private string? lastCopiedPrompt;
+    private static readonly string[] SuggestedPrompts =
+    [
+        "In Silverstone in 2025, what were the main performance risks and setup priorities across the teams?",
+        "For Lando at Silverstone 2025, what issues most affected pace over a race stint?",
+        "Comparing Silverstone and Suzuka in 2025, where are we most vulnerable and why?",
+        "What evidence is there that high-speed rear instability affects driver confidence and lap time consistency?",
+        "What are the two highest-impact actions to improve Sector 2 performance at Silverstone?"
+    ];
 
     private string SelectedDriverValue => selectedDriverId?.ToString() ?? string.Empty;
     private string SelectedRaceValue => selectedRaceId?.ToString() ?? string.Empty;
@@ -153,6 +297,41 @@ else
         {
             isLoading = false;
         }
+    }
+
+    private async Task AskPitWallAsync()
+    {
+        if (string.IsNullOrWhiteSpace(pitWallQuestion))
+        {
+            askError = "Type a question before asking PitWall.";
+            return;
+        }
+
+        isAsking = true;
+        askError = null;
+        try
+        {
+            askResult = await AskPitWallService.AskAsync(pitWallQuestion.Trim());
+        }
+        catch (Exception)
+        {
+            askError = "Could not process this question. Please retry.";
+        }
+        finally
+        {
+            isAsking = false;
+        }
+    }
+
+    private void UsePrompt(string prompt)
+    {
+        pitWallQuestion = prompt;
+    }
+
+    private async Task CopyPromptAsync(string prompt)
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", prompt);
+        lastCopiedPrompt = prompt;
     }
 
     private static int? TryParseOptionalInt(string? input)

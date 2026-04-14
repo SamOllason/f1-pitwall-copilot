@@ -1,6 +1,6 @@
 # PitWall OS - F1 Team Data and AI Insights
 
-PitWall OS is a full-stack Blazor (`.NET 10`) application that simulates an internal tool used by Formula 1 teams to:
+PitWall OS is a full-stack .NET 10 (`Blazor`, `Azure OpenAI`, `.NET 10`, `C#`) application that simulates an internal tool used by Formula 1 teams to:
 
 - Inspect driver and car performance
 - Analyze race trends
@@ -21,8 +21,16 @@ This is a focused learning project to build senior-level full-stack .NET and AI 
 From the repository root:
 
 ```bash
+cp .env.example src/Web/.env
+# edit src/Web/.env with your Azure OpenAI + Azure AI Search keys
 cd src/Web
 dotnet run --launch-profile https
+```
+
+PowerShell equivalent:
+
+```powershell
+Copy-Item .env.example src/Web/.env
 ```
 
 What happens on startup:
@@ -114,18 +122,18 @@ All calculations are done in C#. AI is only used to:
 ## What Makes This Project Strong
 
 1. **Evaluation (Top Signal)**
-   - `5-10` fixed questions
-   - Expected answers stored
-   - AI responses compared against expected outputs
+  - `5-10` fixed questions
+  - Expected answers stored
+  - AI responses compared against expected outputs
 2. **Logging**
-   - User question
-   - Tool calls
-   - AI response
-   - Latency
+  - User question
+  - Tool calls
+  - AI response
+  - Latency
 3. **Cost Awareness**
-   - Token usage tracked per request
+  - Token usage tracked per request
 4. **Fallbacks**
-   - If AI fails, show raw stats
+  - If AI fails, show raw stats
 
 ## Tech Stack
 
@@ -159,18 +167,18 @@ All calculations are done in C#. AI is only used to:
 
 ### Step 1 - Project Foundation (Day 1)
 
-- [ ] Step 1 complete
-- [ ] Create the Blazor Web App skeleton
-- [ ] Set up solution structure using Vertical Slices
-- [ ] Configure EF Core with local DB provider for dev
-- [ ] Add initial domain entities: `Driver`, `Race`, `LapSummary`, `CarPart`
+- Step 1 complete
+- Create the Blazor Web App skeleton
+- Set up solution structure using Vertical Slices
+- Configure EF Core with local DB provider for dev
+- Add initial domain entities: `Driver`, `Race`, `LapSummary`, `CarPart`
 
 ### Step 2 - Seed and Verify Data (Day 1)
 
-- [x] Step 2 complete
-- [x] Build deterministic seed data for `10-20` races
-- [x] Add simple validation checks (record counts, relationships, value ranges)
-- [x] Expose one internal query endpoint to verify seeded data quickly
+- Step 2 complete
+- Build deterministic seed data for `10-20` races
+- Add simple validation checks (record counts, relationships, value ranges)
+- Expose one internal query endpoint to verify seeded data quickly
 
 Quick verify endpoint:
 
@@ -180,28 +188,28 @@ curl http://localhost:5209/internal/seed-validation
 
 ### Step 3 - Build Driver Performance Dashboard (Days 2-3)
 
-- [ ] Step 3 complete
-- [ ] Implement core read queries for average lap time
-- [ ] Implement core read queries for teammate delta
-- [ ] Implement core read queries for multi-race trend
-- [ ] Build one polished page with filtering by driver and race
-- [ ] Add loading/error/empty states
+- Step 3 complete
+- Implement core read queries for average lap time
+- Implement core read queries for teammate delta
+- Implement core read queries for multi-race trend
+- Build one polished page with filtering by driver and race
+- Add loading/error/empty states
 
 ### Step 4 - Add Ask PitWall with Tool Calling (Days 4-5)
 
-- [ ] Step 4 complete
-- [ ] Define tool contracts (`GetDriverPerformance`, `CompareDrivers`)
-- [ ] Wire AI chat flow to call backend tools only
-- [ ] Render final responses with source metrics included
-- [ ] Add fallback path to show raw stats when AI/tool call fails
+- Step 4 complete
+- Define tool contracts (`GetDriverPerformance`, `CompareDrivers`)
+- Wire AI chat flow to call backend tools only
+- Render final responses with source metrics included
+- Add fallback path to show raw stats when AI/tool call fails
 
 ### Step 5 - Add Quality Signals (End of Week 1)
 
-- [ ] Step 5 complete
-- [ ] Add request logging (question, tool calls, latency, answer)
-- [ ] Add token usage tracking
-- [ ] Create a small golden-question eval set (`5-10` prompts)
-- [ ] Run baseline evaluation and capture initial quality metrics
+- Step 5 in progress
+- Done: request logging (question, tool calls, latency, answer)
+- Done: token usage tracking
+- Pending: create a small golden-question eval set (`5-10` prompts)
+- Pending: run baseline evaluation and capture initial quality metrics
 
 ## Definition of Done (V1)
 
@@ -213,6 +221,15 @@ The project is complete when:
 - The app is deployed and usable
 
 ## Future Roadmap
+
+### Missing Foundations (Keep It Tight)
+
+- **Security and Compliance**: secret management (`Key Vault` / env), RBAC, audit/privacy policy, dependency/SAST scanning
+- **Data Governance**: data contracts/versioning, lineage, retention/deletion policy, PII classification
+- **Testing Strategy**: contract tests for tools/APIs, load/perf coverage, failure-injection smoke tests
+- **Release Safety**: feature flags, canary/blue-green rollout, rollback playbooks
+- **Model Operations**: prompt/version registry, model change management, drift detection, re-baselining
+- **Incident Operations**: on-call runbooks, SLO/SLA + error budgets, postmortem process
 
 ### Advanced AI Systems
 
@@ -228,6 +245,7 @@ The project is complete when:
 - Vector search (embeddings + similarity)
 - Hybrid search (keyword + semantic)
 - Data freshness pipelines
+- Optional pre-RAG ingestion pipeline: transcribe voice recordings and normalize social/media notes into canonical markdown, then chunk + enrich with metadata for indexing
 
 ### Evaluation and AI Quality
 

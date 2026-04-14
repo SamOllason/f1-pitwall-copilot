@@ -1,15 +1,20 @@
 using Web.Components;
+using Application.Features.AskPitWall;
 using Application.Features.DriverPerformance;
+using DotNetEnv;
 using Infrastructure;
+using Infrastructure.Features.AskPitWall;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+
+Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
-builder.Services.AddInfrastructure("Data Source=pitwall.db");
+builder.Services.AddInfrastructure("Data Source=pitwall.db", builder.Configuration);
 
 var app = builder.Build();
 
@@ -36,11 +41,21 @@ using (var scope = app.Services.CreateScope())
     await DataSeeder.SeedAsync(dbContext);
 }
 
+var ragBootstrapper = app.Services.GetRequiredService<IRagIndexBootstrapper>();
+await ragBootstrapper.EnsureIndexedAsync();
+
 app.MapGet("/api/driver-performance", async (IDriverPerformanceQueryService queryService, CancellationToken ct) =>
 {
     var data = await queryService.GetOverviewAsync(ct);
     return Results.Ok(data);
 });
+
+app.MapPost("/api/ask-pitwall", async (AskPitWallRequestDto request, IAskPitWallService askPitWallService, CancellationToken ct) =>
+{
+    var response = await askPitWallService.AskAsync(request.Question, ct);
+    return Results.Ok(response);
+})
+.DisableAntiforgery();
 
 app.MapGet("/internal/seed-validation", async (PitWallDbContext dbContext, CancellationToken ct) =>
 {
