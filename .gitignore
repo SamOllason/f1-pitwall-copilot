@@ -1,0 +1,67 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+**/[Bb]in/
+**/[Oo]bj/
+**/[Dd]ebug/
+**/[Rr]elease/
+out/
+artifacts/
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+*.userprefs
+
+# IDE/editor folders
+.vs/
+.vscode/
+.idea/
+
+# Cursor local workspace metadata
+.cursor/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Logs and test artifacts
+*.log
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# ASP.NET / Blazor generated static web assets
+**/wwwroot/_framework/
+**/obj/**/staticwebassets/
+**/*.staticwebassets.endpoints.json
+**/*.staticwebassets.runtime.json
+**/*.StaticWebAssets.xml
+*.cache
+*.cache.json
+
+# Front-end vendor assets (restore via LibMan/NPM if needed)
+**/wwwroot/lib/
+
+# Native/runtime outputs that may appear under build folders
+*.dll
+*.exe
+*.pdb
+*.so
+*.dylib
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db

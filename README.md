@@ -167,10 +167,16 @@ All calculations are done in C#. AI is only used to:
 
 ### Step 2 - Seed and Verify Data (Day 1)
 
-- [ ] Step 2 complete
-- [ ] Build deterministic seed data for `10-20` races
-- [ ] Add simple validation checks (record counts, relationships, value ranges)
-- [ ] Expose one internal query endpoint to verify seeded data quickly
+- [x] Step 2 complete
+- [x] Build deterministic seed data for `10-20` races
+- [x] Add simple validation checks (record counts, relationships, value ranges)
+- [x] Expose one internal query endpoint to verify seeded data quickly
+
+Quick verify endpoint:
+
+```bash
+curl http://localhost:5209/internal/seed-validation
+```
 
 ### Step 3 - Build Driver Performance Dashboard (Days 2-3)
 
@@ -304,5 +310,4 @@ This project demonstrates:
 - Real-world AI integration (tool-based, not superficial)
 - Production-minded engineering (logging, evaluation, reliability)
 
-Goal: build something that feels like a real internal product, not a demo.#   f 1 - p i t w a l l - c o p i l o t  
- 
+Goal: build something that feels like a real internal product, not a demo.

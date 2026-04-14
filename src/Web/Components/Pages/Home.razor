@@ -1,0 +1,47 @@
+﻿@page "/"
+@using Application.Features.DriverPerformance
+@inject IDriverPerformanceQueryService DriverPerformanceQueryService
+
+<PageTitle>PitWall Dashboard</PageTitle>
+
+<h1>Driver Performance Overview</h1>
+
+<p class="text-muted">V1 seeded data view. Lower average lap time is better.</p>
+
+@if (rows is null)
+{
+    <p><em>Loading driver performance...</em></p>
+}
+else
+{
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Driver</th>
+                <th>Team</th>
+                <th>Average Lap (s)</th>
+                <th>Delta to Teammate (s)</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in rows)
+            {
+                <tr>
+                    <td>@row.DriverName</td>
+                    <td>@row.Team</td>
+                    <td>@row.AverageLapTimeSeconds</td>
+                    <td>@row.DeltaToTeammateSeconds</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<DriverPerformanceDto>? rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        rows = await DriverPerformanceQueryService.GetOverviewAsync();
+    }
+}
