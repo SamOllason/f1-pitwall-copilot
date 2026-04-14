@@ -4,44 +4,159 @@
 
 <PageTitle>PitWall Dashboard</PageTitle>
 
-<h1>Driver Performance Overview</h1>
+<h1>Driver Performance Dashboard</h1>
 
-<p class="text-muted">V1 seeded data view. Lower average lap time is better.</p>
+<p class="text-muted">Explore average pace, teammate delta, and race trend from seeded telemetry.</p>
 
-@if (rows is null)
+<div class="filters mb-3">
+    <div class="filter-item">
+        <label class="form-label" for="driverFilter">Driver</label>
+        <select id="driverFilter" class="form-select" value="@SelectedDriverValue" @onchange="OnDriverChanged" disabled="@isLoading">
+            <option value="">All drivers</option>
+            @foreach (var driver in dashboard?.Drivers ?? [])
+            {
+                <option value="@driver.DriverId">@driver.DriverName (@driver.Team)</option>
+            }
+        </select>
+    </div>
+    <div class="filter-item">
+        <label class="form-label" for="raceFilter">Race</label>
+        <select id="raceFilter" class="form-select" value="@SelectedRaceValue" @onchange="OnRaceChanged" disabled="@isLoading">
+            <option value="">All races</option>
+            @foreach (var race in dashboard?.Races ?? [])
+            {
+                <option value="@race.RaceId">@race.RaceName (@race.Date.ToString("yyyy-MM-dd"))</option>
+            }
+        </select>
+    </div>
+</div>
+
+@if (isLoading)
 {
     <p><em>Loading driver performance...</em></p>
 }
+else if (!string.IsNullOrWhiteSpace(loadError))
+{
+    <div class="alert alert-danger" role="alert">
+        @loadError
+    </div>
+}
+else if (dashboard is null || dashboard.Rows.Count == 0)
+{
+    <div class="alert alert-warning" role="alert">
+        No results found for this filter combination.
+    </div>
+}
 else
 {
-    <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Driver</th>
-                <th>Team</th>
-                <th>Average Lap (s)</th>
-                <th>Delta to Teammate (s)</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var row in rows)
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <h2 class="h5 mb-3">Overview</h2>
+            <table class="table table-striped align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Driver</th>
+                        <th>Team</th>
+                        <th>Average Lap (s)</th>
+                        <th>Delta to Teammate (s)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in dashboard.Rows)
+                    {
+                        <tr>
+                            <td>@row.DriverName</td>
+                            <td>@row.Team</td>
+                            <td>@row.AverageLapTimeSeconds</td>
+                            <td>@row.DeltaToTeammateSeconds</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h2 class="h5 mb-3">Trend Over Races</h2>
+            @if (dashboard.Trend.Count == 0)
             {
-                <tr>
-                    <td>@row.DriverName</td>
-                    <td>@row.Team</td>
-                    <td>@row.AverageLapTimeSeconds</td>
-                    <td>@row.DeltaToTeammateSeconds</td>
-                </tr>
+                <p class="mb-0 text-muted">Select a driver to view trend data over races.</p>
             }
-        </tbody>
-    </table>
+            else
+            {
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>Race</th>
+                            <th>Date</th>
+                            <th>Average Lap (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var point in dashboard.Trend)
+                        {
+                            <tr>
+                                <td>@point.RaceName</td>
+                                <td>@point.RaceDate.ToString("yyyy-MM-dd")</td>
+                                <td>@point.AverageLapTimeSeconds</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
 }
 
 @code {
-    private IReadOnlyList<DriverPerformanceDto>? rows;
+    private DriverPerformanceDashboardDto? dashboard;
+    private bool isLoading = true;
+    private string? loadError;
+    private int? selectedDriverId;
+    private int? selectedRaceId;
+
+    private string SelectedDriverValue => selectedDriverId?.ToString() ?? string.Empty;
+    private string SelectedRaceValue => selectedRaceId?.ToString() ?? string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
-        rows = await DriverPerformanceQueryService.GetOverviewAsync();
+        await LoadDashboardAsync();
+    }
+
+    private async Task OnDriverChanged(ChangeEventArgs args)
+    {
+        selectedDriverId = TryParseOptionalInt(args.Value?.ToString());
+        await LoadDashboardAsync();
+    }
+
+    private async Task OnRaceChanged(ChangeEventArgs args)
+    {
+        selectedRaceId = TryParseOptionalInt(args.Value?.ToString());
+        await LoadDashboardAsync();
+    }
+
+    private async Task LoadDashboardAsync()
+    {
+        isLoading = true;
+        loadError = null;
+
+        try
+        {
+            dashboard = await DriverPerformanceQueryService.GetDashboardAsync(selectedDriverId, selectedRaceId);
+        }
+        catch (Exception)
+        {
+            loadError = "Could not load driver performance data. Please retry.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static int? TryParseOptionalInt(string? input)
+    {
+        return int.TryParse(input, out var value) ? value : null;
     }
 }
