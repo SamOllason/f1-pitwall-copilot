@@ -59,10 +59,10 @@ public sealed class OpenAiAskPitWallService(
             var messages = new List<ChatMessage>
             {
                 new SystemChatMessage(
-                    "You are PitWall. You must answer ONLY using provided tool results or retrieved context. " +
-                    "Never invent driver ids. If the user provides names, call FindDriversByName first, then use returned ids. " +
-                    "If the question is about race risks, setup priorities, debrief themes, or track-specific strategy, call SearchRagContext first. " +
-                    "Only use GetDriverPerformance/CompareDrivers when the question is explicitly about driver pace, delta, consistency, or lap-time comparisons."),
+                    "You are PitWall. Ground every answer in retrieved context and/or tool outputs; never fabricate facts or ids. " +
+                    "Decision rubric: use retrieval when context is required, use metrics tools when numeric driver performance is required, and combine both when needed. " +
+                    "If user names are ambiguous, resolve them with FindDriversByName before any id-based tool call. " +
+                    "Before finalizing, verify the answer is evidence-backed and cite source paths when context is used."),
                 new SystemChatMessage($"Retrieved context:\n{ragContextBlock}"),
                 new UserChatMessage(question)
             };
@@ -128,7 +128,7 @@ public sealed class OpenAiAskPitWallService(
         var options = new ChatCompletionOptions();
         options.Tools.Add(ChatTool.CreateFunctionTool(
             functionName: "FindDriversByName",
-            functionDescription: "Resolve fuzzy driver names into known driver ids before other tool calls.",
+            functionDescription: "Resolve user-provided driver names to stable driver ids before id-based metric calls.",
             functionParameters: BinaryData.FromString("""
             {
               "type": "object",
@@ -141,7 +141,7 @@ public sealed class OpenAiAskPitWallService(
 
         options.Tools.Add(ChatTool.CreateFunctionTool(
             functionName: "GetDriverPerformance",
-            functionDescription: "Get performance stats for one driver by id.",
+            functionDescription: "Get deterministic pace/consistency metrics for one driver when a numeric driver analysis is needed.",
             functionParameters: BinaryData.FromString("""
             {
               "type": "object",
@@ -154,7 +154,7 @@ public sealed class OpenAiAskPitWallService(
 
         options.Tools.Add(ChatTool.CreateFunctionTool(
             functionName: "CompareDrivers",
-            functionDescription: "Compare two drivers by id.",
+            functionDescription: "Compare two drivers on deterministic pace and consistency metrics.",
             functionParameters: BinaryData.FromString("""
             {
               "type": "object",
@@ -168,7 +168,7 @@ public sealed class OpenAiAskPitWallService(
 
         options.Tools.Add(ChatTool.CreateFunctionTool(
             functionName: "SearchRagContext",
-            functionDescription: "Retrieve race/debrief context chunks for non-driver-metric questions (risks, setup, strategy, incidents).",
+            functionDescription: "Retrieve relevant race/debrief knowledge chunks with sources when contextual evidence is required.",
             functionParameters: BinaryData.FromString("""
             {
               "type": "object",
