@@ -244,6 +244,7 @@ The project is complete when:
 - Retrieval over race reports, engineer notes, and setup history
 - Vector search (embeddings + similarity)
 - Hybrid search (keyword + semantic)
+- Create and upload embeddings for chunked race knowledge into Azure AI Search index
 - Data freshness pipelines
 - Optional pre-RAG ingestion pipeline: transcribe voice recordings and normalize social/media notes into canonical markdown, then chunk + enrich with metadata for indexing
 
