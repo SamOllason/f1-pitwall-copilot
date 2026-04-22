@@ -101,7 +101,7 @@ public sealed class AzureSearchRagService(
         int top = 5,
         CancellationToken cancellationToken = default)
     {
-        if (!IsConfigured() || string.IsNullOrWhiteSpace(question))
+        if (GetConfigurationIssues().Count > 0 || string.IsNullOrWhiteSpace(question))
         {
             return [];
         }
