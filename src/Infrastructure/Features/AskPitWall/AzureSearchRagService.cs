@@ -21,69 +21,79 @@ public sealed class AzureSearchRagService(
 
     public async Task EnsureIndexedAsync(CancellationToken cancellationToken = default)
     {
-        if (!IsConfigured())
+        var configurationIssues = GetConfigurationIssues();
+        if (configurationIssues.Count > 0)
         {
-            logger.LogInformation("RAG bootstrap skipped because Azure Search/OpenAI env vars are missing.");
+            logger.LogWarning(
+                "RAG bootstrap skipped because configuration is incomplete. Missing/placeholder settings: {Settings}.",
+                string.Join(", ", configurationIssues));
             return;
         }
 
-        await EnsureIndexExistsAsync(cancellationToken);
-        var count = await GetDocumentCountAsync(cancellationToken);
-        if (count > 0)
+        try
         {
-            logger.LogInformation("RAG index already contains {DocumentCount} documents.", count);
-            return;
-        }
-
-        var chunksPath = Path.GetFullPath(Path.Combine(
-            hostEnvironment.ContentRootPath,
-            "..",
-            "..",
-            "sample-data",
-            "rag",
-            "chunks.ndjson"));
-
-        if (!File.Exists(chunksPath))
-        {
-            logger.LogWarning("RAG chunks file not found at {ChunksPath}.", chunksPath);
-            return;
-        }
-
-        var chunks = await LoadChunksAsync(chunksPath, cancellationToken);
-        if (chunks.Count == 0)
-        {
-            logger.LogWarning("RAG chunks file is empty, skipping indexing.");
-            return;
-        }
-
-        var actions = new List<object>(chunks.Count);
-        foreach (var chunk in chunks)
-        {
-            var embedding = await CreateEmbeddingAsync(chunk.Content, cancellationToken);
-            actions.Add(new Dictionary<string, object?>
+            await EnsureIndexExistsAsync(cancellationToken);
+            var count = await GetDocumentCountAsync(cancellationToken);
+            if (count > 0)
             {
-                ["@search.action"] = "mergeOrUpload",
-                ["id"] = chunk.Id,
-                ["content"] = chunk.Content,
-                ["contentVector"] = embedding,
-                ["season"] = chunk.Season,
-                ["race"] = chunk.Race,
-                ["circuit"] = chunk.Circuit,
-                ["driver"] = chunk.Driver,
-                ["docType"] = chunk.DocType,
-                ["source"] = chunk.Source
-            });
+                logger.LogInformation("RAG index already contains {DocumentCount} documents.", count);
+                return;
+            }
+
+            var chunksPath = Path.GetFullPath(Path.Combine(
+                hostEnvironment.ContentRootPath,
+                "..",
+                "..",
+                "sample-data",
+                "rag",
+                "chunks.ndjson"));
+
+            if (!File.Exists(chunksPath))
+            {
+                logger.LogWarning("RAG chunks file not found at {ChunksPath}.", chunksPath);
+                return;
+            }
+
+            var chunks = await LoadChunksAsync(chunksPath, cancellationToken);
+            if (chunks.Count == 0)
+            {
+                logger.LogWarning("RAG chunks file is empty, skipping indexing.");
+                return;
+            }
+
+            var actions = new List<object>(chunks.Count);
+            foreach (var chunk in chunks)
+            {
+                var embedding = await CreateEmbeddingAsync(chunk.Content, cancellationToken);
+                actions.Add(new Dictionary<string, object?>
+                {
+                    ["@search.action"] = "mergeOrUpload",
+                    ["id"] = chunk.Id,
+                    ["content"] = chunk.Content,
+                    ["contentVector"] = embedding,
+                    ["season"] = chunk.Season,
+                    ["race"] = chunk.Race,
+                    ["circuit"] = chunk.Circuit,
+                    ["driver"] = chunk.Driver,
+                    ["docType"] = chunk.DocType,
+                    ["source"] = chunk.Source
+                });
+            }
+
+            var payload = JsonSerializer.Serialize(new { value = actions }, JsonOptions);
+            using var request = BuildSearchRequest(
+                HttpMethod.Post,
+                $"indexes/{searchSettings.IndexName}/docs/index?api-version={SearchApiVersion}",
+                payload);
+
+            using var response = await CreateSearchClient().SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            logger.LogInformation("Indexed {ChunkCount} RAG chunks into Azure AI Search.", chunks.Count);
         }
-
-        var payload = JsonSerializer.Serialize(new { value = actions }, JsonOptions);
-        using var request = BuildSearchRequest(
-            HttpMethod.Post,
-            $"indexes/{searchSettings.IndexName}/docs/index?api-version={SearchApiVersion}",
-            payload);
-
-        using var response = await CreateSearchClient().SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        logger.LogInformation("Indexed {ChunkCount} RAG chunks into Azure AI Search.", chunks.Count);
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "RAG bootstrap skipped because Azure Search/OpenAI endpoint is unreachable.");
+        }
     }
 
     public async Task<IReadOnlyList<RagContextChunkDto>> RetrieveAsync(
@@ -180,7 +190,7 @@ public sealed class AzureSearchRagService(
                 },
                 profiles = new[]
                 {
-                    new { name = "rag-vector-profile", algorithm = "rag-hnsw" }
+                    new { name = "rag-vector-profile", algorithmConfigurationName = "rag-hnsw" }
                 }
             }
         }, JsonOptions);
@@ -191,7 +201,14 @@ public sealed class AzureSearchRagService(
             schema);
 
         using var response = await CreateSearchClient().SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            logger.LogError("Azure AI Search index creation failed with {StatusCode}: {Body}", response.StatusCode, body);
+            return;
+        }
+
+        logger.LogInformation("Azure AI Search index '{IndexName}' is ready.", searchSettings.IndexName);
     }
 
     private async Task<long> GetDocumentCountAsync(CancellationToken cancellationToken)
@@ -259,14 +276,33 @@ public sealed class AzureSearchRagService(
         return request;
     }
 
-    private bool IsConfigured()
+    private List<string> GetConfigurationIssues()
     {
-        return !string.IsNullOrWhiteSpace(searchSettings.Endpoint)
-            && !string.IsNullOrWhiteSpace(searchSettings.ApiKey)
-            && !string.IsNullOrWhiteSpace(searchSettings.IndexName)
-            && !string.IsNullOrWhiteSpace(openAiSettings.ApiKey)
-            && !string.IsNullOrWhiteSpace(openAiSettings.Endpoint)
-            && !string.IsNullOrWhiteSpace(openAiSettings.EmbeddingModel);
+        var issues = new List<string>();
+        AddIssueIfInvalid(issues, searchSettings.Endpoint, "AzureSearch:Endpoint");
+        AddIssueIfInvalid(issues, searchSettings.ApiKey, "AzureSearch:ApiKey");
+        AddIssueIfInvalid(issues, searchSettings.IndexName, "AzureSearch:IndexName");
+        AddIssueIfInvalid(issues, openAiSettings.Endpoint, "OpenAi:Endpoint");
+        AddIssueIfInvalid(issues, openAiSettings.ApiKey, "OpenAi:ApiKey");
+        AddIssueIfInvalid(issues, openAiSettings.EmbeddingModel, "OpenAi:EmbeddingModel");
+        return issues;
+    }
+
+    private static bool LooksLikePlaceholder(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized.Contains("your-")
+            || normalized.Contains("example")
+            || normalized.Contains("placeholder")
+            || normalized.Contains("<");
+    }
+
+    private static void AddIssueIfInvalid(List<string> issues, string? value, string key)
+    {
+        if (string.IsNullOrWhiteSpace(value) || LooksLikePlaceholder(value))
+        {
+            issues.Add(key);
+        }
     }
 
     private static async Task<List<RagChunkSeedRow>> LoadChunksAsync(string path, CancellationToken cancellationToken)

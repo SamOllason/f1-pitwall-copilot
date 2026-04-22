@@ -219,6 +219,10 @@ The project is complete when:
 - Users can ask questions and get data-backed answers
 - AI responses are logged and evaluated
 - The app is deployed and usable
+- The app uses **RAG** to ground responses with simulated data (see `/sample-data/rag`). Two PowerShell scripts handle ingestion: one generates embeddings for each chunk via Azure OpenAI, and one uploads them to Azure AI Search. At query time the flow is:
+  1. **Embed** — the user's question is converted into a vector (a list of numbers representing its meaning) using Azure OpenAI
+  2. **Retrieve** — that vector is used to find the top-k most semantically similar document chunks in Azure AI Search via vector similarity search (using geometric closeness)
+  3. **Inject** — the retrieved chunks are placed into the system prompt so the model answers from real source material rather than hallucinating facts
 
 ## Future Roadmap
 

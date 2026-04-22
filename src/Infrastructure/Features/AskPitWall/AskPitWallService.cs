@@ -10,12 +10,25 @@ public sealed class AskPitWallService(
     IPitWallToolService toolService,
     ILogger<AskPitWallService> logger) : IAskPitWallService
 {
+    // Deterministic fallback service — no LLM involved.
+    //
+    // Routing logic (in order):
+    //   1. Empty question         → prompt the user, no analysis.
+    //   2. Comparison intent      → two drivers named, or keywords like "vs/compare" → CompareDrivers tool.
+    //   3. Single driver named    → GetDriverPerformance tool for that driver.
+    //   4. No driver, no intent   → question needs AI + RAG; return UsedFallback:true with an explanation.
+    //   5. Tool exception         → BuildFallbackAsync returns raw overview stats.
+    //
+    // This service is only reached when OpenAI is not configured or the AI path throws.
+    // For full reasoning (RAG + tool calling) see OpenAiAskPitWallService.
     public async Task<AskPitWallResponseDto> AskAsync(string question, CancellationToken cancellationToken = default)
     {
         var requestId = Guid.NewGuid().ToString("N");
         var stopwatch = Stopwatch.StartNew();
         var auditTrail = new List<AskPitWallAuditEntryDto>();
         var trimmed = question.Trim();
+
+        // 1. Empty question — nothing to analyse.
         if (string.IsNullOrWhiteSpace(trimmed))
         {
             return new AskPitWallResponseDto(
@@ -35,6 +48,8 @@ public sealed class AskPitWallService(
         try
         {
             auditTrail.Add(new AskPitWallAuditEntryDto("Input", "Question parsed", $"Question: {trimmed}"));
+
+            // Scan known driver names against the question text to identify who is being asked about.
             var overview = await driverPerformanceQueryService.GetOverviewAsync(cancellationToken);
             var mentionedDrivers = overview
                 .Where(x => trimmed.Contains(x.DriverName, StringComparison.OrdinalIgnoreCase))
@@ -46,6 +61,7 @@ public sealed class AskPitWallService(
                 "Detected candidate drivers",
                 mentionedDrivers.Count == 0 ? "No explicit driver name found." : $"Driver ids: {string.Join(", ", mentionedDrivers)}"));
 
+            // 2. Two drivers mentioned, or comparison keywords detected → side-by-side comparison.
             if (mentionedDrivers.Count >= 2 || ContainsComparisonIntent(trimmed))
             {
                 var selected = mentionedDrivers.Count >= 2
@@ -90,11 +106,35 @@ public sealed class AskPitWallService(
                 }
             }
 
+            // 3 & 4. Single driver or no driver at all.
             var targetDriverId = mentionedDrivers.FirstOrDefault();
             if (targetDriverId == 0)
             {
-                targetDriverId = overview.FirstOrDefault()?.DriverId ?? 0;
+                // 4. No driver identified and no comparison intent — this question needs AI + RAG.
+                auditTrail.Add(new AskPitWallAuditEntryDto(
+                    "Decision",
+                    "Cannot answer without AI",
+                    "No driver name was found in the question and no comparison intent was detected. " +
+                    "This question requires retrieval-augmented reasoning. Configure an OpenAI API key to enable the AI path."));
+                var noAiResponse = new AskPitWallResponseDto(
+                    RequestId: requestId,
+                    Answer: "This question needs AI reasoning to answer — it requires retrieval context that goes beyond raw metrics. " +
+                            "Configure the OpenAI API key to enable the full PitWall AI path.",
+                    WhySummary: "The deterministic fallback only handles driver-named or comparison questions. " +
+                                "Questions about strategy, setup, or race context require the AI + RAG path.",
+                    ToolCalls: [],
+                    SourceMetrics: [],
+                    AuditTrail: auditTrail,
+                    LatencyMs: (int)stopwatch.ElapsedMilliseconds,
+                    PromptTokens: null,
+                    CompletionTokens: null,
+                    TotalTokens: null,
+                    UsedFallback: true);
+                LogRequest(requestId, trimmed, noAiResponse);
+                return noAiResponse;
             }
+
+            // 3. Single named driver → fetch pace, teammate delta, and consistency.
             auditTrail.Add(new AskPitWallAuditEntryDto(
                 "Decision",
                 "Use GetDriverPerformance tool",
@@ -131,7 +171,7 @@ public sealed class AskPitWallService(
         }
         catch
         {
-            // Fall back to deterministic metrics only if tool orchestration fails.
+            // 5. Tool/data access failure — surface raw overview stats so the user gets something.
         }
 
         var fallback = await BuildFallbackAsync(requestId, stopwatch, cancellationToken);

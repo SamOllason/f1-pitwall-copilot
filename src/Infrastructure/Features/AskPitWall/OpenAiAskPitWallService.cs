@@ -16,10 +16,18 @@ public sealed class OpenAiAskPitWallService(
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    // Entry point — keeps orchestration concerns separate from AI logic.
+    //
+    // Flow:
+    //   1. No API key         → skip AI, return deterministic fallback immediately.
+    //   2. AI path succeeds   → return the LLM-composed response.
+    //   3. AI path throws     → log the error, return deterministic fallback with UsedFallback:true.
     public async Task<AskPitWallResponseDto> AskAsync(string question, CancellationToken cancellationToken = default)
     {
         var requestId = Guid.NewGuid().ToString("N");
         var stopwatch = Stopwatch.StartNew();
+
+        // No API key — skip AI entirely, go straight to the deterministic service.
         if (string.IsNullOrWhiteSpace(settings.ApiKey))
         {
             return await fallbackService.AskAsync(question, cancellationToken);
@@ -27,100 +35,172 @@ public sealed class OpenAiAskPitWallService(
 
         try
         {
-            var client = new OpenAIClient(settings.ApiKey);
-            var chatClient = client.GetChatClient(settings.Model);
-
-            var toolCalls = new List<string>();
-            var sourceMetrics = new List<string>();
-            var promptTokens = 0;
-            var completionTokens = 0;
-            var totalTokens = 0;
-            var ragChunks = await ragContextService.RetrieveAsync(question, top: 4, cancellationToken);
-            var auditTrail = new List<AskPitWallAuditEntryDto>
-            {
-                new("Input", "Question submitted to LLM", question),
-                new("Policy", "Tool-only grounding enabled", "Model is instructed to answer only from tool outputs."),
-                new("RAG", "Retrieved contextual docs", $"Chunks retrieved: {ragChunks.Count}")
-            };
-
-            if (ragChunks.Count > 0)
-            {
-                sourceMetrics.AddRange(ragChunks.Select(x =>
-                    $"RAG [{x.DocType}] {x.Race}/{x.Driver} (score {x.Score:0.###}) -> {x.Source}"));
-            }
-
-            var ragContextBlock = ragChunks.Count == 0
-                ? "No additional retrieval context was found."
-                : string.Join(
-                    "\n\n",
-                    ragChunks.Select((x, i) =>
-                        $"[Chunk {i + 1}] source={x.Source}, race={x.Race}, driver={x.Driver}, circuit={x.Circuit}\n{x.Content}"));
-
-            var messages = new List<ChatMessage>
-            {
-                new SystemChatMessage(
-                    "You are PitWall. Ground every answer in retrieved context and/or tool outputs; never fabricate facts or ids. " +
-                    "Decision rubric: use retrieval when context is required, use metrics tools when numeric driver performance is required, and combine both when needed. " +
-                    "If user names are ambiguous, resolve them with FindDriversByName before any id-based tool call. " +
-                    "Before finalizing, verify the answer is evidence-backed and cite source paths when context is used."),
-                new SystemChatMessage($"Retrieved context:\n{ragContextBlock}"),
-                new UserChatMessage(question)
-            };
-
-            var options = BuildOptions();
-            for (var i = 0; i < 4; i++)
-            {
-                var completion = await chatClient.CompleteChatAsync(messages, options, cancellationToken);
-                var assistantMessage = completion.Value;
-                promptTokens += assistantMessage.Usage.InputTokenCount;
-                completionTokens += assistantMessage.Usage.OutputTokenCount;
-                totalTokens += assistantMessage.Usage.TotalTokenCount;
-                messages.Add(new AssistantChatMessage(assistantMessage));
-
-                if (assistantMessage.ToolCalls.Count == 0)
-                {
-                    var finalAnswer = assistantMessage.Content.Count > 0
-                        ? string.Join(" ", assistantMessage.Content.Select(x => x.Text))
-                        : "I could not generate a response.";
-                    var response = new AskPitWallResponseDto(
-                        RequestId: requestId,
-                        Answer: finalAnswer,
-                        WhySummary: "The LLM used tool outputs collected during this run to compose the explanation.",
-                        ToolCalls: toolCalls,
-                        SourceMetrics: sourceMetrics,
-                        AuditTrail:
-                        [
-                            ..auditTrail,
-                            new AskPitWallAuditEntryDto("Result", "Final response generated", $"Tool calls used: {toolCalls.Count}")
-                        ],
-                        LatencyMs: (int)stopwatch.ElapsedMilliseconds,
-                        PromptTokens: promptTokens,
-                        CompletionTokens: completionTokens,
-                        TotalTokens: totalTokens,
-                        UsedFallback: false);
-                    LogRequest(requestId, question, response);
-                    return response;
-                }
-
-                foreach (var toolCall in assistantMessage.ToolCalls)
-                {
-                    auditTrail.Add(new AskPitWallAuditEntryDto(
-                        "Decision",
-                        "LLM requested tool",
-                        $"{toolCall.FunctionName} with args {toolCall.FunctionArguments.ToString()}"));
-                    var toolResult = await ExecuteToolAsync(toolCall, toolCalls, sourceMetrics, auditTrail, cancellationToken);
-                    messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
-                }
-            }
+            return await RunAiPathAsync(question, requestId, stopwatch, cancellationToken);
         }
-        catch
+        catch (Exception ex)
         {
-            // Use deterministic fallback on AI/tool-call failures.
+            logger.LogError(ex, "OpenAI path failed for request {RequestId}, falling back to deterministic service.", requestId);
         }
 
         var fallback = await fallbackService.AskAsync(question, cancellationToken);
-        LogRequest(requestId, question, fallback);
-        return fallback;
+        var fallbackWithFlag = fallback with { UsedFallback = true };
+        LogRequest(requestId, question, fallbackWithFlag);
+        return fallbackWithFlag;
+    }
+
+    // Runs the full AI path:
+    //   1. Retrieve RAG context and build the system prompt.
+    //   2. Run the agentic loop (up to 4 turns): call the LLM, dispatch any tool calls, feed
+    //      results back into the message history, repeat until the model stops requesting tools.
+    //   3. Return a response DTO built from the final assistant message.
+    private async Task<AskPitWallResponseDto> RunAiPathAsync(
+        string question,
+        string requestId,
+        Stopwatch stopwatch,
+        CancellationToken cancellationToken)
+    {
+        var chatClient = new OpenAIClient(settings.ApiKey).GetChatClient(settings.Model);
+        var toolCalls = new List<string>();
+        var sourceMetrics = new List<string>();
+        var promptTokens = 0;
+        var completionTokens = 0;
+        var totalTokens = 0;
+
+        // 1. Fetch relevant document chunks and wire them into the system prompt.
+        var (messages, auditTrail) = await BuildInitialMessagesAsync(question, sourceMetrics, cancellationToken);
+
+        // 2. Agentic loop — THIS IS WHERE THE MODEL DECIDES WHAT TO DO.
+        //
+        // How tool-calling works:
+        //   - We pass the model a list of available tools (defined in BuildOptions).
+        //   - The model reads the question + RAG context and decides whether it needs more
+        //     evidence. If it does, it responds with one or more tool call requests instead
+        //     of a final answer. It does NOT call the tools itself — it just says "please
+        //     call X with these arguments". We execute those calls and send the results back.
+        //   - On the next turn the model has new evidence and can either ask for more tools
+        //     or produce its final answer.
+        //   - This repeats up to 4 turns. In practice most questions settle in 1–2 turns.
+        //
+        // The tool the model picks depends on the question type:
+        //   - Factual race/setup/strategy questions → SearchRagContext (retrieves doc chunks)
+        //   - "Who is faster?" / pace questions     → GetDriverPerformance or CompareDrivers
+        //   - Ambiguous driver name in the question → FindDriversByName first, then metrics
+        //   - Complex questions                     → may combine retrieval + metrics tools
+        var options = BuildOptions();
+        for (var i = 0; i < 4; i++)
+        {
+            // Send the full conversation history (system prompt + RAG context + any prior
+            // tool results) to the model and wait for its next response.
+            var completion = await chatClient.CompleteChatAsync(messages, options, cancellationToken);
+            var assistantMessage = completion.Value;
+            promptTokens += assistantMessage.Usage.InputTokenCount;
+            completionTokens += assistantMessage.Usage.OutputTokenCount;
+            totalTokens += assistantMessage.Usage.TotalTokenCount;
+
+            // Append the model's response to the history so the next turn has full context.
+            messages.Add(new AssistantChatMessage(assistantMessage));
+
+            // ── DECISION POINT ──────────────────────────────────────────────────────────
+            // The model either requests more tools OR produces its final text answer.
+            // ────────────────────────────────────────────────────────────────────────────
+
+            if (assistantMessage.ToolCalls.Count == 0)
+            {
+                // No tool calls → the model is satisfied it has enough evidence.
+                // Extract the answer text and build the response DTO.
+                var finalAnswer = assistantMessage.Content.Count > 0
+                    ? string.Join(" ", assistantMessage.Content.Select(x => x.Text))
+                    : "I could not generate a response.";
+
+                // 3. Build and return the completed response.
+                var response = new AskPitWallResponseDto(
+                    RequestId: requestId,
+                    Answer: finalAnswer,
+                    WhySummary: "This answer was composed by the LLM from retrieved context and tool outputs gathered during this run.",
+                    ToolCalls: toolCalls,
+                    SourceMetrics: sourceMetrics,
+                    AuditTrail:
+                    [
+                        ..auditTrail,
+                        new AskPitWallAuditEntryDto("Result", "Final response generated", $"Tool calls used: {toolCalls.Count}")
+                    ],
+                    LatencyMs: (int)stopwatch.ElapsedMilliseconds,
+                    PromptTokens: promptTokens,
+                    CompletionTokens: completionTokens,
+                    TotalTokens: totalTokens,
+                    UsedFallback: false);
+                LogRequest(requestId, question, response);
+                return response;
+            }
+
+            // The model wants more information — it has chosen one or more tools to call.
+            // We execute each tool, record what happened in the audit trail, then append
+            // the results as ToolChatMessages so the model can read them on the next turn.
+            foreach (var toolCall in assistantMessage.ToolCalls)
+            {
+                auditTrail.Add(new AskPitWallAuditEntryDto(
+                    "Decision",
+                    $"LLM chose tool: {toolCall.FunctionName}",
+                    $"Args: {toolCall.FunctionArguments}"));
+                var toolResult = await ExecuteToolAsync(toolCall, toolCalls, sourceMetrics, auditTrail, cancellationToken);
+                messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
+            }
+
+            // Loop back → model now sees its own tool results and decides again.
+        }
+
+        // Reached the turn limit without a final answer — treat as a failure so AskAsync falls back.
+        throw new InvalidOperationException("Agent loop exhausted all turns without producing a final answer.");
+    }
+
+    // Retrieves RAG chunks, formats them into a context block, and returns the initial message
+    // list (system prompt + user question) together with the opening audit trail entries.
+    private async Task<(List<ChatMessage> Messages, List<AskPitWallAuditEntryDto> AuditTrail)> BuildInitialMessagesAsync(
+        string question,
+        List<string> sourceMetrics,
+        CancellationToken cancellationToken)
+    {
+        var ragChunks = await ragContextService.RetrieveAsync(question, top: 4, cancellationToken);
+
+        // Summarise what was retrieved for the audit trail.
+        var ragAuditDetail = ragChunks.Count == 0
+            ? "No chunks retrieved — answer will rely entirely on tool outputs."
+            : string.Join("; ", ragChunks.Select(x => $"{x.Source} [{x.Race}/{x.Driver}, score {x.Score:0.###}]"));
+
+        // Surface RAG sources in the UI source-metrics panel.
+        if (ragChunks.Count > 0)
+        {
+            sourceMetrics.AddRange(ragChunks.Select(x =>
+                $"RAG [{x.DocType}] {x.Race}/{x.Driver} (score {x.Score:0.###}) -> {x.Source}"));
+        }
+
+        // Format chunks into a numbered block that sits in the system prompt.
+        var ragContextBlock = ragChunks.Count == 0
+            ? "No additional retrieval context was found."
+            : string.Join(
+                "\n\n",
+                ragChunks.Select((x, i) =>
+                    $"[Chunk {i + 1}] source={x.Source}, race={x.Race}, driver={x.Driver}, circuit={x.Circuit}\n{x.Content}"));
+
+        var auditTrail = new List<AskPitWallAuditEntryDto>
+        {
+            new("Input", "Question submitted to LLM", question),
+            new("Policy", "Grounding policy", "Answer from retrieved context + tool outputs; never fabricate facts."),
+            new("RAG", $"Retrieved {ragChunks.Count} contextual chunk(s)", ragAuditDetail)
+        };
+
+        var messages = new List<ChatMessage>
+        {
+            new SystemChatMessage(
+                "You are PitWall. Ground every answer in retrieved context and/or tool outputs; never fabricate facts or ids. " +
+                "Decision rubric: use retrieval when context is required, use metrics tools when numeric driver performance is required, and combine both when needed. " +
+                "If user names are ambiguous, resolve them with FindDriversByName before any id-based tool call. " +
+                "Before finalizing, verify the answer is evidence-backed and cite source paths when context is used."),
+            new SystemChatMessage($"Retrieved context:\n{ragContextBlock}"),
+            new UserChatMessage(question)
+        };
+
+        return (messages, auditTrail);
     }
 
     private static ChatCompletionOptions BuildOptions()
