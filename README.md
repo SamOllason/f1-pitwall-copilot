@@ -14,9 +14,11 @@ This isn't just "chatbot answers" but an **observable AI behavior** you can insp
 
 ## Screenshots
 
-| Landing + Dashboard | Ask Result + Audit Trail |
-| --- | --- |
-| ![Pitwall Copilot - landing state](src/documentation/screenshots/screenshot-1.png) | ![Pitwall Copilot - results and audit trail](src/documentation/screenshots/screenshot-2.png) |
+
+| Telemetry Dashboard View                             | Grounded Response + Audit Trail                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------ |
+| ![Formula 1 Pitwall Copilot - telemetry dashboard view](src/documentation/screenshots/screenshot-1.png) | ![Formula 1 Pitwall Copilot - grounded RAG response with audit trail](src/documentation/screenshots/screenshot-2.png) |
+
 
 ## Why I built this
 
@@ -76,26 +78,22 @@ User Question
 
 The retrieval path is vector-based and grounded in seeded race knowledge.
 
-1. **Chunk source documents**  
-   Race briefings and driver debriefs are chunked and stored in `sample-data/rag/chunks.ndjson` with metadata (season, race, circuit, driver, doc type, source path).
-
-2. **Create embeddings**  
-   The app generates embeddings using the configured embedding model (`OPENAI_EMBEDDING_MODEL`, e.g. `text-embedding-3-small`).
-
-3. **Index in Azure AI Search**  
-   On startup, `AzureSearchRagService` ensures the index exists and uploads chunk text + vectors to fields such as:
-   - `content`
-   - `contentVector`
-   - metadata fields (`race`, `driver`, `circuit`, `docType`, `source`, etc.)
-
-4. **Query-time retrieval**  
-   For each question, the query is embedded and used in a vector search (`SearchRagContext`) against `contentVector` to fetch top-k relevant chunks.
-
-5. **Grounded answer generation**  
-   Retrieved chunks are injected into the model context, combined with tool outputs, and then the final answer is generated with:
-   - audit trail entries (retrieval + tool decisions/results)
-   - confidence score/rationale
-   - source evidence shown in UI
+1. **Chunk source documents**
+  Race briefings and driver debriefs are chunked and stored in `sample-data/rag/chunks.ndjson` with metadata (season, race, circuit, driver, doc type, source path).
+2. **Create embeddings**
+  The app generates embeddings using the configured embedding model (`OPENAI_EMBEDDING_MODEL`, e.g. `text-embedding-3-small`).
+3. **Index in Azure AI Search**
+  On startup, `AzureSearchRagService` ensures the index exists and uploads chunk text + vectors to fields such as:
+  - `content`
+  - `contentVector`
+  - metadata fields (`race`, `driver`, `circuit`, `docType`, `source`, etc.)
+4. **Query-time retrieval**
+  For each question, the query is embedded and used in a vector search (`SearchRagContext`) against `contentVector` to fetch top-k relevant chunks.
+5. **Grounded answer generation**
+  Retrieved chunks are injected into the model context, combined with tool outputs, and then the final answer is generated with:
+  - audit trail entries (retrieval + tool decisions/results)
+  - confidence score/rationale
+  - source evidence shown in UI
 
 This makes the system traceable: you can see exactly what was retrieved, what tools were called, and why the answer is trustworthy (or not).
 
@@ -109,13 +107,15 @@ If AI config is missing or invalid, the app falls back safely:
 
 ## Tech stack
 
-| Layer | Technology |
-| --- | --- |
-| Frontend | Blazor Server (.NET 10) |
-| Backend | ASP.NET Core, EF Core, SQLite |
-| AI | OpenAI client integration (`OpenAI.Chat`) |
-| Retrieval | Azure AI Search (vector search) |
-| Architecture | Clean Architecture + vertical slices |
+
+| Layer        | Technology                                |
+| ------------ | ----------------------------------------- |
+| Frontend     | Blazor Server (.NET 10)                   |
+| Backend      | ASP.NET Core, EF Core, SQLite             |
+| AI           | OpenAI client integration (`OpenAI.Chat`) |
+| Retrieval    | Azure AI Search (vector search)           |
+| Architecture | Clean Architecture + vertical slices      |
+
 
 ## Run locally
 
@@ -158,3 +158,4 @@ On startup the app seeds SQLite data and attempts to initialize/index the RAG st
 - richer token/cost reporting in UI
 - prompt/model version tracking
 - Azure deployment with Key Vault + app telemetry
+
