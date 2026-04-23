@@ -14,11 +14,11 @@
     <div class="card shadow-sm mt-3">
         <div class="card-body">
             <h2 class="h5 mb-3">Ask PitWall</h2>
-            <p class="text-muted mb-3">Ask for race briefing and debrief insights to see RAG retrieval and tool grounding in the audit trail.</p>
+            <p class="text-muted mb-3">Ask naturally, and PitWall will pull relevant context and tool outputs behind the scenes.</p>
 
             <details class="mb-3">
                 <summary class="fw-semibold">Show suggested RAG prompts</summary>
-                <p class="text-muted mt-2 mb-2">These prompts mirror the seeded briefing/debrief language so retrieval is easy to verify in the audit trail.</p>
+                <p class="text-muted mt-2 mb-2">Try realistic questions a user would actually ask while still showcasing retrieval in the audit trail.</p>
                 <div class="d-grid gap-2">
                     @foreach (var prompt in SuggestedPrompts)
                     {
@@ -49,7 +49,7 @@
 
             <div class="input-group mb-3">
                 <input class="form-control"
-                       placeholder="e.g. From the Silverstone 2025 race briefing, what are the main risks?"
+                       placeholder="e.g. At Silverstone 2025, what were the biggest risks and setup priorities?"
                        @bind="pitWallQuestion"
                        @bind:event="oninput"
                        disabled="@isAsking" />
@@ -253,12 +253,20 @@ else
     private string? lastCopiedPrompt;
     private static readonly string[] SuggestedPrompts =
     [
-        "From the Silverstone 2025 race briefing, what are the top performance risks and setup priorities?",
-        "At Silverstone 2025, what does the briefing say about soft-tire degradation versus medium-tire race compromise?",
-        "For Lando Norris at Silverstone 2025, what recurring instability pattern appears in the driver debrief and what actions are recommended?",
-        "How does rear instability in high-speed transitions affect confidence and stint pace for Lando at Silverstone 2025?",
-        "Compare Silverstone 2025 and Suzuka 2025 briefings: key vulnerabilities, tire behavior, and setup direction.",
-        "In Suzuka 2025, what setup changes are recommended for front flap and differential through the Esses?"
+        // Silverstone — driver debrief
+        "Why does Lando struggle with rear instability at Silverstone, and how does it affect his pace?",
+        "After a rear snap at Silverstone 2025, what short-run performance pattern showed up for Lando?",
+
+        // Silverstone — race briefing
+        "What tire strategy is recommended for the British Grand Prix 2025?",
+        "What are the main setup priorities for Silverstone 2025?",
+
+        // Suzuka — race briefing
+        "What is the setup direction for the Esses at Suzuka 2025?",
+        "How does soft tire degradation compare to medium at Suzuka 2025?",
+
+        // Cross-circuit
+        "Comparing Silverstone and Suzuka 2025, where are we most vulnerable and why?",
     ];
 
     private string SelectedDriverValue => selectedDriverId?.ToString() ?? string.Empty;
