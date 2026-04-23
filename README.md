@@ -15,7 +15,7 @@ This isn't just "chatbot answers" but an **observable AI behavior** you can insp
 ## Screenshots
 
 
-| Telemetry Dashboard View                             | Grounded Response + Audit Trail                                    |
+| Landing state with suggested questions                             | Grounded response + audit trail                                   |
 | ---------------------------------------------------- | ------------------------------------------------------------------ |
 | ![Formula 1 Pitwall Copilot - telemetry dashboard view](src/documentation/screenshots/screenshot-1.png) | ![Formula 1 Pitwall Copilot - grounded RAG response with audit trail](src/documentation/screenshots/screenshot-2.png) |
 
