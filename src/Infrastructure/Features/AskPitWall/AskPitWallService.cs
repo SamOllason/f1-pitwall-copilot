@@ -42,7 +42,8 @@ public sealed class AskPitWallService(
                 PromptTokens: null,
                 CompletionTokens: null,
                 TotalTokens: null,
-                UsedFallback: false);
+                UsedFallback: false,
+                Confidence: new AnswerConfidence(ConfidenceLevel.VeryLow, "no question was asked"));
         }
 
         try
@@ -79,6 +80,7 @@ public sealed class AskPitWallService(
                         ? comparison.DriverA.DriverName
                         : comparison.DriverB.DriverName;
                     var fasterBy = Math.Abs(comparison.AverageLapGapSeconds);
+                    var comparisonConfidence = ConfidenceEvaluator.Evaluate([], toolCallCount: 1, answerText: string.Empty);
                     var response = new AskPitWallResponseDto(
                         RequestId: requestId,
                         Answer: $"{fasterDriver} is quicker on average by {fasterBy:0.###}s. " +
@@ -94,13 +96,15 @@ public sealed class AskPitWallService(
                         AuditTrail:
                         [
                             ..auditTrail,
-                            new AskPitWallAuditEntryDto("Result", "Comparison complete", $"Faster: {fasterDriver}. More consistent: {comparison.MoreConsistentDriverName}.")
+                            new AskPitWallAuditEntryDto("Result", "Comparison complete", $"Faster: {fasterDriver}. More consistent: {comparison.MoreConsistentDriverName}."),
+                            new AskPitWallAuditEntryDto("Confidence", comparisonConfidence.Level.ToString(), comparisonConfidence.Rationale)
                         ],
                         LatencyMs: (int)stopwatch.ElapsedMilliseconds,
                         PromptTokens: null,
                         CompletionTokens: null,
                         TotalTokens: null,
-                        UsedFallback: false);
+                        UsedFallback: false,
+                        Confidence: comparisonConfidence);
                     LogRequest(requestId, trimmed, response);
                     return response;
                 }
@@ -116,6 +120,7 @@ public sealed class AskPitWallService(
                     "Cannot answer without AI",
                     "No driver name was found in the question and no comparison intent was detected. " +
                     "This question requires retrieval-augmented reasoning. Configure an OpenAI API key to enable the AI path."));
+                var noAiConfidence = new AnswerConfidence(ConfidenceLevel.VeryLow, "AI path not available — answer cannot be grounded without retrieval context");
                 var noAiResponse = new AskPitWallResponseDto(
                     RequestId: requestId,
                     Answer: "This question needs AI reasoning to answer — it requires retrieval context that goes beyond raw metrics. " +
@@ -129,7 +134,8 @@ public sealed class AskPitWallService(
                     PromptTokens: null,
                     CompletionTokens: null,
                     TotalTokens: null,
-                    UsedFallback: true);
+                    UsedFallback: true,
+                    Confidence: noAiConfidence);
                 LogRequest(requestId, trimmed, noAiResponse);
                 return noAiResponse;
             }
@@ -143,6 +149,7 @@ public sealed class AskPitWallService(
             var driver = await toolService.GetDriverPerformanceAsync(targetDriverId, cancellationToken);
             if (driver is not null)
             {
+                var driverConfidence = ConfidenceEvaluator.Evaluate([], toolCallCount: 1, answerText: string.Empty);
                 var response = new AskPitWallResponseDto(
                     RequestId: requestId,
                     Answer: $"{driver.DriverName} averages {driver.AverageLapTimeSeconds:0.###}s per lap. " +
@@ -158,13 +165,15 @@ public sealed class AskPitWallService(
                     AuditTrail:
                     [
                         ..auditTrail,
-                        new AskPitWallAuditEntryDto("Result", "Single-driver summary complete", $"Driver: {driver.DriverName}.")
+                        new AskPitWallAuditEntryDto("Result", "Single-driver summary complete", $"Driver: {driver.DriverName}."),
+                        new AskPitWallAuditEntryDto("Confidence", driverConfidence.Level.ToString(), driverConfidence.Rationale)
                     ],
                     LatencyMs: (int)stopwatch.ElapsedMilliseconds,
                     PromptTokens: null,
                     CompletionTokens: null,
                     TotalTokens: null,
-                    UsedFallback: false);
+                    UsedFallback: false,
+                    Confidence: driverConfidence);
                 LogRequest(requestId, trimmed, response);
                 return response;
             }
@@ -194,6 +203,7 @@ public sealed class AskPitWallService(
             .Select(x => $"{x.DriverName}: avg {x.AverageLapTimeSeconds:0.###}s, delta {x.DeltaToTeammateSeconds:0.###}s")
             .ToList();
 
+        var fallbackConfidence = new AnswerConfidence(ConfidenceLevel.VeryLow, "fallback mode — AI/tool orchestration failed, showing raw stats only");
         return new AskPitWallResponseDto(
             RequestId: requestId,
             Answer: answer,
@@ -202,13 +212,15 @@ public sealed class AskPitWallService(
             SourceMetrics: metrics,
             AuditTrail:
             [
-                new AskPitWallAuditEntryDto("Fallback", "Returned deterministic data", "Top drivers were selected from precomputed overview stats.")
+                new AskPitWallAuditEntryDto("Fallback", "Returned deterministic data", "Top drivers were selected from precomputed overview stats."),
+                new AskPitWallAuditEntryDto("Confidence", fallbackConfidence.Level.ToString(), fallbackConfidence.Rationale)
             ],
             LatencyMs: (int)stopwatch.ElapsedMilliseconds,
             PromptTokens: null,
             CompletionTokens: null,
             TotalTokens: null,
-            UsedFallback: true);
+            UsedFallback: true,
+            Confidence: fallbackConfidence);
     }
 
     private void LogRequest(string requestId, string question, AskPitWallResponseDto response)

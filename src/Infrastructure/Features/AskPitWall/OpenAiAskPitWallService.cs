@@ -1,8 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Application.Features.AskPitWall;
+using Azure;
+using Azure.AI.OpenAI;
 using Microsoft.Extensions.Logging;
-using OpenAI;
 using OpenAI.Chat;
 
 namespace Infrastructure.Features.AskPitWall;
@@ -43,7 +44,11 @@ public sealed class OpenAiAskPitWallService(
         }
 
         var fallback = await fallbackService.AskAsync(question, cancellationToken);
-        var fallbackWithFlag = fallback with { UsedFallback = true };
+        var fallbackWithFlag = fallback with
+        {
+            UsedFallback = true,
+            Confidence = new AnswerConfidence(ConfidenceLevel.VeryLow, "OpenAI path failed — answer is from deterministic fallback only")
+        };
         LogRequest(requestId, question, fallbackWithFlag);
         return fallbackWithFlag;
     }
@@ -59,15 +64,17 @@ public sealed class OpenAiAskPitWallService(
         Stopwatch stopwatch,
         CancellationToken cancellationToken)
     {
-        var chatClient = new OpenAIClient(settings.ApiKey).GetChatClient(settings.Model);
+        var chatClient = new AzureOpenAIClient(new Uri(settings.Endpoint!), new AzureKeyCredential(settings.ApiKey!))
+            .GetChatClient(settings.Model);
         var toolCalls = new List<string>();
         var sourceMetrics = new List<string>();
+        var chunkScores = new List<double>(); // collected across upfront retrieval + any SearchRagContext tool calls
         var promptTokens = 0;
         var completionTokens = 0;
         var totalTokens = 0;
 
         // 1. Fetch relevant document chunks and wire them into the system prompt.
-        var (messages, auditTrail) = await BuildInitialMessagesAsync(question, sourceMetrics, cancellationToken);
+        var (messages, auditTrail) = await BuildInitialMessagesAsync(question, sourceMetrics, chunkScores, cancellationToken);
 
         // 2. Agentic loop — THIS IS WHERE THE MODEL DECIDES WHAT TO DO.
         //
@@ -112,7 +119,8 @@ public sealed class OpenAiAskPitWallService(
                     ? string.Join(" ", assistantMessage.Content.Select(x => x.Text))
                     : "I could not generate a response.";
 
-                // 3. Build and return the completed response.
+                // 3. Evaluate confidence from observable signals, then build and return the response.
+                var confidence = ConfidenceEvaluator.Evaluate(chunkScores, toolCalls.Count, finalAnswer);
                 var response = new AskPitWallResponseDto(
                     RequestId: requestId,
                     Answer: finalAnswer,
@@ -122,13 +130,15 @@ public sealed class OpenAiAskPitWallService(
                     AuditTrail:
                     [
                         ..auditTrail,
-                        new AskPitWallAuditEntryDto("Result", "Final response generated", $"Tool calls used: {toolCalls.Count}")
+                        new AskPitWallAuditEntryDto("Result", "Final response generated", $"Tool calls used: {toolCalls.Count}"),
+                        new AskPitWallAuditEntryDto("Confidence", confidence.Level.ToString(), confidence.Rationale)
                     ],
                     LatencyMs: (int)stopwatch.ElapsedMilliseconds,
                     PromptTokens: promptTokens,
                     CompletionTokens: completionTokens,
                     TotalTokens: totalTokens,
-                    UsedFallback: false);
+                    UsedFallback: false,
+                    Confidence: confidence);
                 LogRequest(requestId, question, response);
                 return response;
             }
@@ -142,7 +152,7 @@ public sealed class OpenAiAskPitWallService(
                     "Decision",
                     $"LLM chose tool: {toolCall.FunctionName}",
                     $"Args: {toolCall.FunctionArguments}"));
-                var toolResult = await ExecuteToolAsync(toolCall, toolCalls, sourceMetrics, auditTrail, cancellationToken);
+                var toolResult = await ExecuteToolAsync(toolCall, toolCalls, sourceMetrics, chunkScores, auditTrail, cancellationToken);
                 messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
             }
 
@@ -158,9 +168,11 @@ public sealed class OpenAiAskPitWallService(
     private async Task<(List<ChatMessage> Messages, List<AskPitWallAuditEntryDto> AuditTrail)> BuildInitialMessagesAsync(
         string question,
         List<string> sourceMetrics,
+        List<double> chunkScores,
         CancellationToken cancellationToken)
     {
         var ragChunks = await ragContextService.RetrieveAsync(question, top: 4, cancellationToken);
+        chunkScores.AddRange(ragChunks.Select(x => x.Score));
 
         // Summarise what was retrieved for the audit trail.
         var ragAuditDetail = ragChunks.Count == 0
@@ -186,8 +198,11 @@ public sealed class OpenAiAskPitWallService(
         {
             new("Input", "Question submitted to LLM", question),
             new("Policy", "Grounding policy", "Answer from retrieved context + tool outputs; never fabricate facts."),
-            new("RAG", $"Retrieved {ragChunks.Count} contextual chunk(s)", ragAuditDetail)
+            new("RAG", $"Retrieved {ragChunks.Count} contextual chunk(s) — injected into system prompt", ragAuditDetail)
         };
+
+        // One entry per chunk so the user can see exactly what context the LLM was given.
+        AddChunkAuditEntries(auditTrail, ragChunks, "RAG Chunk (upfront)");
 
         var messages = new List<ChatMessage>
         {
@@ -267,6 +282,7 @@ public sealed class OpenAiAskPitWallService(
         ChatToolCall toolCall,
         List<string> toolCalls,
         List<string> sourceMetrics,
+        List<double> chunkScores,
         List<AskPitWallAuditEntryDto> auditTrail,
         CancellationToken cancellationToken)
     {
@@ -353,12 +369,38 @@ public sealed class OpenAiAskPitWallService(
                 $"RAG [{x.DocType}] {x.Race}/{x.Driver} (score {x.Score:0.###}) -> {x.Source}"));
             auditTrail.Add(new AskPitWallAuditEntryDto(
                 "ToolResult",
-                "SearchRagContext returned chunks",
-                $"Chunks: {chunks.Count}, top source: {chunks[0].Source}"));
+                $"SearchRagContext returned {chunks.Count} chunk(s)",
+                $"Query: \"{query}\", top source: {chunks[0].Source}"));
+
+            // Collect scores so the confidence evaluator sees tool-triggered retrieval too.
+            chunkScores.AddRange(chunks.Select(x => x.Score));
+
+            // One entry per chunk so the user can see what the LLM retrieved on-demand.
+            AddChunkAuditEntries(auditTrail, chunks, "RAG Chunk (tool)");
             return JsonSerializer.Serialize(chunks, JsonOptions);
         }
 
         return """{"error":"Unknown function."}""";
+    }
+
+    // Appends one audit entry per chunk, showing the source, relevance score, and a short
+    // content preview. The stage label distinguishes upfront retrieval from tool-triggered
+    // retrieval so the user can see when the LLM decided it needed more context mid-turn.
+    private static void AddChunkAuditEntries(
+        List<AskPitWallAuditEntryDto> auditTrail,
+        IReadOnlyList<RagContextChunkDto> chunks,
+        string stage)
+    {
+        foreach (var (chunk, index) in chunks.Select((c, i) => (c, i + 1)))
+        {
+            var preview = chunk.Content.Length <= 120
+                ? chunk.Content
+                : chunk.Content[..120] + "…";
+            auditTrail.Add(new AskPitWallAuditEntryDto(
+                stage,
+                $"#{index} {chunk.Source} — {chunk.Race} / {chunk.Driver} (score {chunk.Score:0.###})",
+                preview));
+        }
     }
 
     private void LogRequest(string requestId, string question, AskPitWallResponseDto response)

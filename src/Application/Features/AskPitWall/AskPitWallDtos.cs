@@ -11,7 +11,14 @@ public sealed record AskPitWallResponseDto(
     int? PromptTokens,
     int? CompletionTokens,
     int? TotalTokens,
-    bool UsedFallback);
+    bool UsedFallback,
+    AnswerConfidence Confidence);
+
+public enum ConfidenceLevel { High, Medium, Low, VeryLow }
+
+// The confidence score attached to every response, along with a one-line rationale
+// so the user can see exactly why the score is what it is.
+public sealed record AnswerConfidence(ConfidenceLevel Level, string Rationale);
 
 public sealed record AskPitWallAuditEntryDto(
     string Stage,

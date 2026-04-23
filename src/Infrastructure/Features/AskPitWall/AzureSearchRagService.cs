@@ -32,13 +32,17 @@ public sealed class AzureSearchRagService(
 
         try
         {
-            await EnsureIndexExistsAsync(cancellationToken);
+            // Check document count first — if the index already has data, skip the schema
+            // PUT entirely. Azure Search rejects PUT requests that try to change immutable
+            // fields (like algorithm config) on an existing index.
             var count = await GetDocumentCountAsync(cancellationToken);
             if (count > 0)
             {
-                logger.LogInformation("RAG index already contains {DocumentCount} documents.", count);
+                logger.LogInformation("RAG index already contains {DocumentCount} documents, skipping bootstrap.", count);
                 return;
             }
+
+            await EnsureIndexExistsAsync(cancellationToken);
 
             var chunksPath = Path.GetFullPath(Path.Combine(
                 hostEnvironment.ContentRootPath,
@@ -190,7 +194,7 @@ public sealed class AzureSearchRagService(
                 },
                 profiles = new[]
                 {
-                    new { name = "rag-vector-profile", algorithmConfigurationName = "rag-hnsw" }
+                    new { name = "rag-vector-profile", algorithm = "rag-hnsw" }
                 }
             }
         }, JsonOptions);
