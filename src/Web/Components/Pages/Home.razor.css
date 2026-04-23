@@ -74,13 +74,31 @@ details.prompts-details summary:hover { color: var(--pw-accent); }
     margin-bottom: 1rem;
 }
 
+.answer-paragraph {
+    margin: 0 0 0.9rem;
+    text-indent: 1.25rem;
+}
+
+.answer-paragraph:last-child {
+    margin-bottom: 0;
+}
+
 .confidence-row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.6rem;
     margin-bottom: 1rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--pw-border);
+}
+
+.confidence-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pw-muted);
 }
 
 .confidence-badge {
@@ -201,7 +219,13 @@ details.prompts-details summary:hover { color: var(--pw-accent); }
 
 .audit-body { flex: 1; min-width: 0; }
 .audit-decision { font-weight: 500; color: #333; word-break: break-word; }
-.audit-detail   { color: var(--pw-muted); margin-top: 0.15rem; word-break: break-word; }
+.audit-detail {
+    color: var(--pw-muted);
+    margin-top: 0.25rem;
+    white-space: pre-line;
+    line-height: 1.5;
+    word-break: break-word;
+}
 
 /* ── Audit sub-sections ──────────────────────────────────────── */
 .audit-subsection { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--pw-border); }

@@ -177,7 +177,9 @@ public sealed class OpenAiAskPitWallService(
         // Summarise what was retrieved for the audit trail.
         var ragAuditDetail = ragChunks.Count == 0
             ? "No chunks retrieved — answer will rely entirely on tool outputs."
-            : string.Join("; ", ragChunks.Select(x => $"{x.Source} [{x.Race}/{x.Driver}, score {x.Score:0.###}]"));
+            : string.Join(
+                "\n",
+                ragChunks.Select((x, i) => $"{i + 1}. {x.Source} [{x.Race}/{x.Driver}, score {x.Score:0.###}]"));
 
         // Surface RAG sources in the UI source-metrics panel.
         if (ragChunks.Count > 0)

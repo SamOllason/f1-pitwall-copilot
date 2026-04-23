@@ -7,31 +7,25 @@ PitWall Copilot is a portfolio-focused full-stack Azure/.NET AI project that sim
 Users ask natural-language strategy questions, and the system responds with grounded analysis by combining:
 
 - deterministic telemetry tools (driver pace, teammate delta, consistency)
-- retrieval from race briefings and driver debriefs
-- explicit decision tracing and confidence scoring
+- retrieval using RAG (using Azure AI Search) from race briefings and driver debriefs
+- explicit decision tracing and audit trails with confidence scoring
 
-The goal is not just "chatbot answers." The goal is **observable AI behavior** you can inspect end-to-end.
+This isn't just "chatbot answers" but an **observable AI behavior** you can inspect end-to-end.
 
-## Why did I built this
+## Screenshots
 
-To explore RAG and AI orchestration using Azure and .NET.
+| Landing + Dashboard | Ask Result + Audit Trail |
+| --- | --- |
+| ![Pitwall Copilot - landing state](src/documentation/screenshots/screenshot-1.png) | ![Pitwall Copilot - results and audit trail](src/documentation/screenshots/screenshot-2.png) |
+
+## Why I built this
+
+I wanted to build a learning project that demonstrates practical AI engineering patterns in a way that's easy to inspect and explain.
 
 - **AI orchestration, not a single prompt**: retrieval + function/tool calling + fallback policy
 - **Transparent output**: visible audit trail shows how the answer was produced
 - **Production-minded behavior**: graceful degradation when keys/services are missing
 - **Grounded by design**: answers are tied to retrieved context and explicit tool outputs
-
-## Screenshots
-
-Replace the placeholders below after you capture your images.
-
-| Ask + Answer + Audit Trail | RAG Retrieval in Action |
-| --- | --- |
-| ![Ask PitWall Placeholder](documentation/screenshots/pitwall-ask-answer-placeholder.png) | ![RAG Audit Placeholder](documentation/screenshots/pitwall-rag-audit-placeholder.png) |
-
-| Suggested Prompts UX | Driver Performance Dashboard |
-| --- | --- |
-| ![Prompts Placeholder](documentation/screenshots/pitwall-suggested-prompts-placeholder.png) | ![Dashboard Placeholder](documentation/screenshots/pitwall-dashboard-placeholder.png) |
 
 ## What it does
 
@@ -48,6 +42,17 @@ Each response includes:
 - confidence level and confidence reasons
 - full audit trail (input -> policy -> retrieval -> tool decisions -> result)
 - tool usage and token metrics
+
+## Architecture
+
+This project follows a **Clean Architecture** style with clear layer boundaries:
+
+- `Domain`: core entities and business model
+- `Application`: use cases, contracts, DTOs, confidence evaluation logic
+- `Infrastructure`: external integrations (OpenAI/Azure Search), EF Core persistence, tool implementations
+- `Web`: Blazor UI and app composition
+
+Dependency direction is inward (`Web` -> `Infrastructure` -> `Application` -> `Domain`), and orchestration logic depends on application contracts rather than UI concerns.
 
 ## How it works
 
@@ -67,6 +72,33 @@ User Question
 - `GetDriverPerformance` - single-driver telemetry summary
 - `CompareDrivers` - side-by-side comparisons
 
+## RAG Pipeline (Azure AI Search + Embeddings)
+
+The retrieval path is vector-based and grounded in seeded race knowledge.
+
+1. **Chunk source documents**  
+   Race briefings and driver debriefs are chunked and stored in `sample-data/rag/chunks.ndjson` with metadata (season, race, circuit, driver, doc type, source path).
+
+2. **Create embeddings**  
+   The app generates embeddings using the configured embedding model (`OPENAI_EMBEDDING_MODEL`, e.g. `text-embedding-3-small`).
+
+3. **Index in Azure AI Search**  
+   On startup, `AzureSearchRagService` ensures the index exists and uploads chunk text + vectors to fields such as:
+   - `content`
+   - `contentVector`
+   - metadata fields (`race`, `driver`, `circuit`, `docType`, `source`, etc.)
+
+4. **Query-time retrieval**  
+   For each question, the query is embedded and used in a vector search (`SearchRagContext`) against `contentVector` to fetch top-k relevant chunks.
+
+5. **Grounded answer generation**  
+   Retrieved chunks are injected into the model context, combined with tool outputs, and then the final answer is generated with:
+   - audit trail entries (retrieval + tool decisions/results)
+   - confidence score/rationale
+   - source evidence shown in UI
+
+This makes the system traceable: you can see exactly what was retrieved, what tools were called, and why the answer is trustworthy (or not).
+
 ### Fallback behavior
 
 If AI config is missing or invalid, the app falls back safely:
@@ -83,7 +115,7 @@ If AI config is missing or invalid, the app falls back safely:
 | Backend | ASP.NET Core, EF Core, SQLite |
 | AI | OpenAI client integration (`OpenAI.Chat`) |
 | Retrieval | Azure AI Search (vector search) |
-| Architecture | Vertical slices + clean dependency boundaries |
+| Architecture | Clean Architecture + vertical slices |
 
 ## Run locally
 

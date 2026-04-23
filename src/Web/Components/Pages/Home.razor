@@ -5,11 +5,11 @@
 @inject IDriverPerformanceQueryService DriverPerformanceQueryService
 @inject IJSRuntime JS
 
-<PageTitle>PitWall � Driver Performance</PageTitle>
+<PageTitle>🏎️ Formula 1 Pitwall Copilot</PageTitle>
 
 <div class="page-header">
-    <h1>Driver Performance</h1>
-    <p>Pace, teammate delta, and race trend from seeded telemetry � ask PitWall to go deeper.</p>
+    <h1>🏎️ Formula 1 Pitwall Copilot</h1>
+    <p>Pace, teammate delta, and race trend from seeded telemetry - ask PitWall to go deeper.</p>
 </div>
 
 
@@ -40,7 +40,7 @@
                @bind:event="oninput"
                disabled="@isAsking" />
         <button class="btn btn-primary" @onclick="AskPitWallAsync" disabled="@isAsking">
-            @(isAsking ? "Thinking�" : "Ask")
+            @(isAsking ? "Thinking..." : "Ask")
         </button>
     </div>
 
@@ -55,9 +55,15 @@
 
             
             <div class="answer-card">
-                <p class="answer-text">@askResult.Answer</p>
+                <div class="answer-text">
+                    @foreach (var paragraph in BuildAnswerParagraphs(askResult.Answer))
+                    {
+                        <p class="answer-paragraph">@paragraph</p>
+                    }
+                </div>
 
                 <div class="confidence-row">
+                    <span class="confidence-label">Confidence score</span>
                     <span class="confidence-badge @ConfidenceBadgeClass(askResult.Confidence.Level)">
                         @askResult.Confidence.Level
                     </span>
@@ -66,7 +72,7 @@
 
                 @if (askResult.UsedFallback)
                 {
-                    <div class="fallback-notice">Fallback mode � AI path unavailable, showing deterministic stats.</div>
+                    <div class="fallback-notice">Fallback mode - AI path unavailable, showing deterministic stats.</div>
                 }
 
                 @if (askResult.SourceMetrics.Count > 0)
@@ -83,11 +89,11 @@
                 }
 
                 <div class="meta-row">
-                    <code class="me-2">@askResult.RequestId[..8]�</code>
-                    @askResult.LatencyMs ms
+                    <span>Request:</span> <code class="me-2">@askResult.RequestId[..8]</code>
+                    <span class="ms-2">Latency:</span> <span>@askResult.LatencyMs ms</span>
                     @if (askResult.TotalTokens.HasValue)
                     {
-                        <span class="ms-2">� @askResult.TotalTokens tok</span>
+                        <span class="ms-2">Tokens:</span> <span>@askResult.TotalTokens tok</span>
                     }
                 </div>
             </div>
@@ -125,9 +131,9 @@
                 <div class="audit-subsection">
                     <div class="audit-subsection-title">Usage</div>
                     <div class="audit-usage-row">
-                        <span>Prompt</span><span>@(askResult.PromptTokens?.ToString() ?? "�") tok</span>
-                        <span>Completion</span><span>@(askResult.CompletionTokens?.ToString() ?? "�") tok</span>
-                        <span>Total</span><span>@(askResult.TotalTokens?.ToString() ?? "�") tok</span>
+                        <span>Prompt</span><span>@(askResult.PromptTokens?.ToString() ?? "n/a") tok</span>
+                        <span>Completion</span><span>@(askResult.CompletionTokens?.ToString() ?? "n/a") tok</span>
+                        <span>Total</span><span>@(askResult.TotalTokens?.ToString() ?? "n/a") tok</span>
                         <span>Latency</span><span>@askResult.LatencyMs ms</span>
                     </div>
                 </div>
@@ -165,7 +171,7 @@
 
 @if (isLoading)
 {
-    <p class="text-muted"><em>Loading�</em></p>
+    <p class="text-muted"><em>Loading...</em></p>
 }
 else if (!string.IsNullOrWhiteSpace(loadError))
 {
@@ -251,15 +257,15 @@ else
 
     private static readonly string[] SuggestedPrompts =
     [
-        // Silverstone � driver debrief
+        // Silverstone - driver debrief
         "Why does Lando struggle with rear instability at Silverstone, and how does it affect his pace?",
         "After a rear snap at Silverstone 2025, what short-run performance pattern showed up for Lando?",
 
-        // Silverstone � race briefing
+        // Silverstone - race briefing
         "What tire strategy is recommended for the British Grand Prix 2025?",
         "What are the main setup priorities for Silverstone 2025?",
 
-        // Suzuka � race briefing
+        // Suzuka - race briefing
         "What is the setup direction for the Esses at Suzuka 2025?",
         "How does soft tire degradation compare to medium at Suzuka 2025?",
 
@@ -363,6 +369,65 @@ else
             "fallback"               => "stage-fallback",
             _                        => "stage-default"
         };
+    }
+
+    private static IReadOnlyList<string> BuildAnswerParagraphs(string answer)
+    {
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            return ["No answer generated."];
+        }
+
+        var compact = string.Join(" ", answer.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        var sentences = SplitSentences(compact);
+        if (sentences.Count <= 2)
+        {
+            return [compact];
+        }
+
+        var paragraphs = new List<string>();
+        for (var i = 0; i < sentences.Count; i += 2)
+        {
+            var chunk = sentences.Skip(i).Take(2);
+            paragraphs.Add(string.Join(" ", chunk));
+        }
+
+        return paragraphs;
+    }
+
+    private static List<string> SplitSentences(string text)
+    {
+        var sentences = new List<string>();
+        var start = 0;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] is '.' or '!' or '?')
+            {
+                var length = i - start + 1;
+                if (length > 0)
+                {
+                    var sentence = text.Substring(start, length).Trim();
+                    if (!string.IsNullOrWhiteSpace(sentence))
+                    {
+                        sentences.Add(sentence);
+                    }
+                }
+
+                start = i + 1;
+            }
+        }
+
+        if (start < text.Length)
+        {
+            var trailing = text[start..].Trim();
+            if (!string.IsNullOrWhiteSpace(trailing))
+            {
+                sentences.Add(trailing);
+            }
+        }
+
+        return sentences.Count > 0 ? sentences : [text];
     }
 }
 
