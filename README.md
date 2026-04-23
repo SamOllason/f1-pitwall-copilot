@@ -2,7 +2,7 @@
 
 > AI-native F1 strategy copilot with tool orchestration, RAG grounding, and transparent reasoning.
 
-PitWall Copilot is a portfolio-focused full-stack .NET AI project that simulates an internal race engineering assistant for a Formula 1 team.
+PitWall Copilot is a portfolio-focused full-stack Azure/.NET AI project that simulates an internal race engineering assistant for a Formula 1 team.
 
 Users ask natural-language strategy questions, and the system responds with grounded analysis by combining:
 
@@ -12,7 +12,9 @@ Users ask natural-language strategy questions, and the system responds with grou
 
 The goal is not just "chatbot answers." The goal is **observable AI behavior** you can inspect end-to-end.
 
-## Why this project is strong portfolio material
+## Why did I built this
+
+To explore RAG and AI orchestration using Azure and .NET.
 
 - **AI orchestration, not a single prompt**: retrieval + function/tool calling + fallback policy
 - **Transparent output**: visible audit trail shows how the answer was produced
