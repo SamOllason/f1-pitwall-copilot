@@ -70,8 +70,14 @@
                 <div class="row g-3">
                     <div class="col-lg-8">
                         <div class="border rounded p-3 bg-light-subtle h-100">
-                            <p class="mb-2"><strong>Answer:</strong> @askResult.Answer</p>
-                            <p class="mb-2"><strong>Why this result:</strong> @askResult.WhySummary</p>
+                        <p class="mb-2"><strong>Answer:</strong> @askResult.Answer</p>
+                        <div class="mb-2 d-flex align-items-center gap-2">
+                            <span class="badge @ConfidenceBadgeClass(askResult.Confidence.Level) fs-6">
+                                @askResult.Confidence.Level confidence
+                            </span>
+                            <span class="small text-muted">@askResult.Confidence.Rationale</span>
+                        </div>
+                        <p class="mb-2"><strong>Why this result:</strong> @askResult.WhySummary</p>
                             <p class="mb-2 small text-muted">
                                 Request: <code>@askResult.RequestId</code> |
                                 Latency: @askResult.LatencyMs ms |
@@ -347,4 +353,13 @@ else
     {
         return int.TryParse(input, out var value) ? value : null;
     }
+
+    private static string ConfidenceBadgeClass(ConfidenceLevel level) => level switch
+    {
+        ConfidenceLevel.High    => "bg-success",
+        ConfidenceLevel.Medium  => "bg-warning text-dark",
+        ConfidenceLevel.Low     => "bg-danger",
+        ConfidenceLevel.VeryLow => "bg-secondary",
+        _                       => "bg-secondary"
+    };
 }
